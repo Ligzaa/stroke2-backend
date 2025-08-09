@@ -22,6 +22,15 @@ app.use(cors({
   allowedHeaders: ['Content-Type']
 }));
 
+// [เพิ่ม] log ทุก request เพื่อดูใน Render Logs
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
+// [เพิ่ม] ตอบ preflight ให้ชัด (ปกติ cors() ก็พอ แต่นี่กันไว้)
+app.options('/api/submit', cors({ origin: ALLOWED_ORIGIN }));
+
 // ====== Local JSON fallback (เหมือนเดิม) ======
 const DATA_FILE = path.join(__dirname, 'data.json');
 function readData() {
@@ -64,19 +73,26 @@ app.get('/', (_req, res) => {
   res.send('Backend is running. Use POST /api/submit and open /admin for summary.');
 });
 
+// [เพิ่ม] กันคนเรียก GET /api/submit แล้วสับสน
+app.get('/api/submit', (_req, res) => {
+  res.status(405).send('Use POST /api/submit');
+});
+
 // ====== API เดิม: รับข้อมูล ======
 app.post('/api/submit', async (req, res) => {
   const { riskPercentage, gender, age } = req.body || {};
-  if (!riskPercentage || !gender || !age) {
+  if (riskPercentage === undefined || gender === undefined || age === undefined) {
     return res.status(400).json({ message: 'Missing data' });
   }
 
   try {
     if (useDB && Entry) {
-      // เก็บลงฐานข้อมูล
-      await Entry.create({ riskPercentage: String(riskPercentage), gender, age: Number(age) });
+      await Entry.create({
+        riskPercentage: String(riskPercentage),
+        gender,
+        age: Number(age)
+      });
     } else {
-      // โหมดสำรอง: เขียนไฟล์แบบเดิม
       const data = readData();
       if (!data[riskPercentage]) data[riskPercentage] = [];
       data[riskPercentage].push({ gender, age: Number(age) });
@@ -90,8 +106,7 @@ app.post('/api/submit', async (req, res) => {
 });
 
 // ====== Admin เดิม: สรุปสถิติ ======
-app.get('/admin', async (req, res) => {
-  // กลุ่มอายุเดิม
+app.get('/admin', async (_req, res) => {
   const ageRanges = [
     { label: '1-15', min: 1, max: 15 },
     { label: '16-39', min: 16, max: 39 },
@@ -100,9 +115,7 @@ app.get('/admin', async (req, res) => {
     { label: '60+',  min: 60, max: 150 }
   ];
 
-  // ดึงข้อมูลให้มีโครงเหมือนของเดิม: { [risk]: [ {gender, age}, ... ] }
   let grouped = {};
-
   try {
     if (useDB && Entry) {
       const all = await Entry.find({}, { riskPercentage: 1, gender: 1, age: 1, _id: 0 }).lean();
@@ -112,7 +125,7 @@ app.get('/admin', async (req, res) => {
         grouped[key].push({ gender: r.gender, age: Number(r.age) });
       }
     } else {
-      grouped = readData(); // โหมดไฟล์เดิม
+      grouped = readData();
     }
   } catch (e) {
     console.error('GET /admin error:', e);
@@ -129,7 +142,7 @@ app.get('/admin', async (req, res) => {
   for (let r of risks) {
     const items = Array.isArray(grouped[r]) ? grouped[r] : [];
     const genderCount = { 'ชาย': 0, 'หญิง': 0, 'อื่นๆ': 0 };
-    const ageCount = Array(ageRanges.length).fill(0); // ให้ตรงจำนวนช่วงอายุ
+    const ageCount = Array(ageRanges.length).fill(0);
 
     for (const u of items) {
       if (genderCount[u.gender] !== undefined) genderCount[u.gender]++;

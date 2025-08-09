@@ -117,6 +117,13 @@ app.post('/api/submit', async (req, res) => {
   }
 });
 
+//debugging: log allowed origins
+console.log('ALLOWLIST =', ALLOWLIST);
+app.use((req,res,next)=>{
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${req.headers.origin||'-'}`);
+  next();
+});
+
 // หน้า Admin สรุปสถิติ (เหมือนเดิม)
 app.get('/admin', async (_req, res) => {
   const ageRanges = [

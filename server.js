@@ -1,5 +1,5 @@
-// server.js (minimal changes for production)
-// — คงโครงเดิมไว้ เพิ่มแค่สิ่งที่จำเป็นสำหรับ Render + MongoDB —
+// server.js — ready for Render + MongoDB Atlas + multi-origin CORS
+// คงโครงเดิมไว้ แต่เติมสิ่งจำเป็นสำหรับโปรดักชัน
 
 const express = require('express');
 const fs = require('fs');
@@ -11,25 +11,38 @@ const app = express();
 
 // ====== Config (สำคัญเวลา deploy) ======
 const PORT = process.env.PORT || 3000;
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 
-// ====== Middlewares ======
-app.use(express.json());
-app.use(cors({
-  origin: ALLOWED_ORIGIN,
-  methods: ['GET','POST','OPTIONS'],
-  allowedHeaders: ['Content-Type']
-}));
+// ALLOWED_ORIGIN รองรับหลายโดเมน คั่นด้วยจุลภาค
+// ตัวอย่างบน Render:  https://stroke-hero.netlify.app,http://localhost:5500
+const rawOrigins = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
+const ALLOWLIST = rawOrigins.split(',').map(s => s.trim()).filter(Boolean);
 
-// [เพิ่ม] log ทุก request เพื่อดูใน Render Logs
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+// ====== CORS & Middlewares ======
+// ฟังก์ชันเลือก origin ทีละค่า (ห้ามส่งหลายค่าใน header เดียว)
+function corsOrigin(origin, callback) {
+  // ไม่มี origin (เช่น curl/health-check) → อนุญาต
+  if (!origin) return callback(null, true);
+  if (ALLOWLIST.includes(origin)) return callback(null, true);
+  return callback(new Error('Not allowed by CORS: ' + origin));
+}
+
+app.use(express.json());
+
+// log ทุกคำขอไว้ดูใน Render Logs
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${req.headers.origin || '-'}`);
   next();
 });
 
-// [เพิ่ม] ตอบ preflight ให้ชัด (ปกติ cors() ก็พอ แต่นี่กันไว้)
-app.options('/api/submit', cors({ origin: ALLOWED_ORIGIN }));
+app.use(cors({
+  origin: corsOrigin,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
+
+// ให้ preflight ผ่านทุกเส้นทาง
+app.options('*', cors({ origin: corsOrigin }));
 
 // ====== Local JSON fallback (เหมือนเดิม) ======
 const DATA_FILE = path.join(__dirname, 'data.json');
@@ -37,7 +50,7 @@ function readData() {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf-8');
     return JSON.parse(raw || '{}');
-  } catch (e) {
+  } catch {
     return {};
   }
 }
@@ -52,10 +65,7 @@ let Entry = null;
 if (MONGODB_URI) {
   mongoose.set('strictQuery', true);
   mongoose.connect(MONGODB_URI, {})
-    .then(() => {
-      console.log('✅ MongoDB connected');
-      useDB = true;
-    })
+    .then(() => { console.log('✅ MongoDB connected'); useDB = true; })
     .catch(err => console.error('❌ MongoDB error:', err.message));
 
   const entrySchema = new mongoose.Schema({
@@ -68,17 +78,19 @@ if (MONGODB_URI) {
   Entry = mongoose.models.Entry || mongoose.model('Entry', entrySchema);
 }
 
+// ====== Routes ======
+
 // Health check
 app.get('/', (_req, res) => {
   res.send('Backend is running. Use POST /api/submit and open /admin for summary.');
 });
 
-// [เพิ่ม] กันคนเรียก GET /api/submit แล้วสับสน
+// กันสับสน: ไม่รองรับ GET /api/submit
 app.get('/api/submit', (_req, res) => {
   res.status(405).send('Use POST /api/submit');
 });
 
-// ====== API เดิม: รับข้อมูล ======
+// รับข้อมูลจากหน้าเว็บ
 app.post('/api/submit', async (req, res) => {
   const { riskPercentage, gender, age } = req.body || {};
   if (riskPercentage === undefined || gender === undefined || age === undefined) {
@@ -105,7 +117,7 @@ app.post('/api/submit', async (req, res) => {
   }
 });
 
-// ====== Admin เดิม: สรุปสถิติ ======
+// หน้า Admin สรุปสถิติ (เหมือนเดิม)
 app.get('/admin', async (_req, res) => {
   const ageRanges = [
     { label: '1-15', min: 1, max: 15 },

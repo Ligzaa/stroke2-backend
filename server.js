@@ -11,7 +11,7 @@ const app = express();
 
 // ====== Config (สำคัญเวลา deploy) ======
 const PORT = process.env.PORT || 3000;
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://strokehero.netlify.app/';
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 
 // ====== Middlewares ======
@@ -159,4 +159,3 @@ app.get('/admin', async (req, res) => {
 });
 
 app.listen(PORT, () => console.log('Server ready at http://localhost:' + PORT));
-

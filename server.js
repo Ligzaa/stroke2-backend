@@ -16,35 +16,42 @@ const MONGODB_URI = process.env.MONGODB_URI || '';
 // ALLOWED_ORIGIN รองรับหลายโดเมน คั่นด้วยจุลภาค
 // ตัวอย่างบน Render:  https://stroke-hero.netlify.app,http://localhost:5500
 const rawOrigins = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
-const ALLOWLIST = rawOrigins.split(',').map(s => s.trim()).filter(Boolean);
+
 
 // ====== CORS & Middlewares ======
 // ฟังก์ชันเลือก origin ทีละค่า (ห้ามส่งหลายค่าใน header เดียว)
+// ====== CORS & Middlewares (แทนที่ของเดิมทั้งหมด) ======
+const raw = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
+// รองรับหลายโดเมน: ใส่คอมมาคั่น เช่น "https://stroke-hero.netlify.app,http://localhost:5500"
+// รองรับ '*' ด้วย
+const ALLOWLIST = raw.split(',').map(s => s.trim()).filter(Boolean);
+
+function corsOrigin(origin, cb) {
+  // ไม่มี origin (เช่น curl/health check) ให้ผ่าน
+  if (!origin) return cb(null, true);
+  // อนุญาตทุกโดเมนถ้ามี '*'
+  if (ALLOWLIST.includes('*')) return cb(null, true);
+  // อนุญาตเฉพาะที่อยู่ในลิสต์
+  if (ALLOWLIST.includes(origin)) return cb(null, true);
+  return cb(new Error('Not allowed by CORS: ' + origin));
+}
+
 app.use((req, res, next) => {
-  // log debug
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${req.headers.origin || '-'}`);
   console.log('ALLOWLIST =', ALLOWLIST);
-
-  const origin = req.headers.origin;
-  const allowAny = ALLOWLIST.includes('*');
-  const allowed = allowAny || (origin && ALLOWLIST.includes(origin));
-
-  // ให้เบราว์เซอร์ cache ตาม Origin
+  // ให้เบราว์เซอร์ cache header ตาม origin
   res.setHeader('Vary', 'Origin');
-
-  if (allowed && origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  }
-
-  // ตอบ preflight ทันที
-  if (req.method === 'OPTIONS') return res.sendStatus(allowed ? 204 : 403);
-  return next();
+  next();
 });
 
+app.use(require('cors')({
+  origin: corsOrigin,
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
+
 // ให้ preflight ผ่านทุกเส้นทาง
-app.options('*', cors({ origin: corsOrigin }));
+app.options('*', require('cors')({ origin: corsOrigin }));
 
 // ====== Local JSON fallback (เหมือนเดิม) ======
 const DATA_FILE = path.join(__dirname, 'data.json');

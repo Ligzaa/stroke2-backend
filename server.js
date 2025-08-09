@@ -1,5 +1,4 @@
-// server.js — ready for Render + MongoDB Atlas + multi-origin CORS
-// คงโครงเดิมไว้ แต่เติมสิ่งจำเป็นสำหรับโปรดักชัน
+// server.js — Render + MongoDB Atlas + multi-origin CORS
 
 const express = require('express');
 const fs = require('fs');
@@ -9,65 +8,47 @@ const mongoose = require('mongoose');
 
 const app = express();
 
-// ====== Config (สำคัญเวลา deploy) ======
+// ===== Config =====
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI || '';
+const ALLOWLIST = (process.env.ALLOWED_ORIGIN || 'http://localhost:5500')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 
-// ALLOWED_ORIGIN รองรับหลายโดเมน คั่นด้วยจุลภาค
-// ตัวอย่างบน Render:  https://stroke-hero.netlify.app,http://localhost:5500
-const rawOrigins = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
-
-
-// ====== CORS & Middlewares ======
-// ฟังก์ชันเลือก origin ทีละค่า (ห้ามส่งหลายค่าใน header เดียว)
-// ====== CORS & Middlewares (แทนที่ของเดิมทั้งหมด) ======
-const raw = process.env.ALLOWED_ORIGIN || 'http://localhost:5500';
-// รองรับหลายโดเมน: ใส่คอมมาคั่น เช่น "https://stroke-hero.netlify.app,http://localhost:5500"
-// รองรับ '*' ด้วย
-const ALLOWLIST = raw.split(',').map(s => s.trim()).filter(Boolean);
+// ===== Middlewares & CORS (วางก่อนทุก route) =====
+app.use(express.json());
 
 function corsOrigin(origin, cb) {
-  // ไม่มี origin (เช่น curl/health check) ให้ผ่าน
-  if (!origin) return cb(null, true);
-  // อนุญาตทุกโดเมนถ้ามี '*'
-  if (ALLOWLIST.includes('*')) return cb(null, true);
-  // อนุญาตเฉพาะที่อยู่ในลิสต์
+  if (!origin) return cb(null, true);                  // curl/health-check
+  if (ALLOWLIST.includes('*')) return cb(null, true);  // อนุญาตทุกโดเมน
   if (ALLOWLIST.includes(origin)) return cb(null, true);
   return cb(new Error('Not allowed by CORS: ' + origin));
 }
 
 app.use((req, res, next) => {
+  res.setHeader('Vary', 'Origin'); // ให้ cache ตาม origin
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${req.headers.origin || '-'}`);
   console.log('ALLOWLIST =', ALLOWLIST);
-  // ให้เบราว์เซอร์ cache header ตาม origin
-  res.setHeader('Vary', 'Origin');
   next();
 });
 
-app.use(require('cors')({
+app.use(cors({
   origin: corsOrigin,
-  methods: ['GET','POST','OPTIONS'],
+  methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type']
 }));
+app.options('*', cors({ origin: corsOrigin })); // preflight
 
-// ให้ preflight ผ่านทุกเส้นทาง
-app.options('*', require('cors')({ origin: corsOrigin }));
-
-// ====== Local JSON fallback (เหมือนเดิม) ======
+// ===== Local JSON fallback =====
 const DATA_FILE = path.join(__dirname, 'data.json');
 function readData() {
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    return JSON.parse(raw || '{}');
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8') || '{}'); }
+  catch { return {}; }
 }
-function writeData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8');
-}
+function writeData(data) { fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8'); }
 
-// ====== MongoDB (ใช้เมื่อมี MONGODB_URI) ======
+// ===== MongoDB =====
 let useDB = false;
 let Entry = null;
 
@@ -87,19 +68,14 @@ if (MONGODB_URI) {
   Entry = mongoose.models.Entry || mongoose.model('Entry', entrySchema);
 }
 
-// ====== Routes ======
-
-// Health check
+// ===== Routes =====
 app.get('/', (_req, res) => {
   res.send('Backend is running. Use POST /api/submit and open /admin for summary.');
 });
 
-// กันสับสน: ไม่รองรับ GET /api/submit
-app.get('/api/submit', (_req, res) => {
-  res.status(405).send('Use POST /api/submit');
-});
+// กันสับสน: GET /api/submit ไม่รองรับ
+app.get('/api/submit', (_req, res) => res.status(405).send('Use POST /api/submit'));
 
-// รับข้อมูลจากหน้าเว็บ
 app.post('/api/submit', async (req, res) => {
   const { riskPercentage, gender, age } = req.body || {};
   if (riskPercentage === undefined || gender === undefined || age === undefined) {
@@ -108,11 +84,7 @@ app.post('/api/submit', async (req, res) => {
 
   try {
     if (useDB && Entry) {
-      await Entry.create({
-        riskPercentage: String(riskPercentage),
-        gender,
-        age: Number(age)
-      });
+      await Entry.create({ riskPercentage: String(riskPercentage), gender, age: Number(age) });
     } else {
       const data = readData();
       if (!data[riskPercentage]) data[riskPercentage] = [];
@@ -126,14 +98,6 @@ app.post('/api/submit', async (req, res) => {
   }
 });
 
-//debugging: log allowed origins
-console.log('ALLOWLIST =', ALLOWLIST);
-app.use((req,res,next)=>{
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${req.headers.origin||'-'}`);
-  next();
-});
-
-// หน้า Admin สรุปสถิติ (เหมือนเดิม)
 app.get('/admin', async (_req, res) => {
   const ageRanges = [
     { label: '1-15', min: 1, max: 15 },
@@ -162,38 +126,22 @@ app.get('/admin', async (_req, res) => {
 
   const risks = Object.keys(grouped);
   let html = `<table border=1 cellpadding=8><tr>
-    <th>Risk %</th>
-    <th>ชาย</th><th>หญิง</th><th>ไม่ระบุ</th>
+    <th>Risk %</th><th>ชาย</th><th>หญิง</th><th>ไม่ระบุ</th>
     <th>1-15</th><th>16-39</th><th>40-49</th><th>50-59</th><th>60+</th>
   </tr>`;
-
   for (let r of risks) {
     const items = Array.isArray(grouped[r]) ? grouped[r] : [];
     const genderCount = { 'ชาย': 0, 'หญิง': 0, 'อื่นๆ': 0 };
     const ageCount = Array(ageRanges.length).fill(0);
-
     for (const u of items) {
-      if (genderCount[u.gender] !== undefined) genderCount[u.gender]++;
-      else genderCount['อื่นๆ']++;
-
+      if (genderCount[u.gender] !== undefined) genderCount[u.gender]++; else genderCount['อื่นๆ']++;
       for (let i = 0; i < ageRanges.length; i++) {
-        if (u.age >= ageRanges[i].min && u.age <= ageRanges[i].max) {
-          ageCount[i]++;
-          break;
-        }
+        if (u.age >= ageRanges[i].min && u.age <= ageRanges[i].max) { ageCount[i]++; break; }
       }
     }
-
-    html += `<tr><td>${r}</td>
-      <td>${genderCount['ชาย']}</td>
-      <td>${genderCount['หญิง']}</td>
-      <td>${genderCount['อื่นๆ']}</td>
-      <td>${ageCount[0]}</td>
-      <td>${ageCount[1]}</td>
-      <td>${ageCount[2]}</td>
-      <td>${ageCount[3]}</td>
-      <td>${ageCount[4]}</td>
-    </tr>`;
+    html += `<tr><td>${r}</td><td>${genderCount['ชาย']}</td><td>${genderCount['หญิง']}</td>
+             <td>${genderCount['อื่นๆ']}</td><td>${ageCount[0]}</td><td>${ageCount[1]}</td>
+             <td>${ageCount[2]}</td><td>${ageCount[3]}</td><td>${ageCount[4]}</td></tr>`;
   }
   html += `</table>`;
   res.send(html);

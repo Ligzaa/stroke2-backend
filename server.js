@@ -20,26 +20,28 @@ const ALLOWLIST = rawOrigins.split(',').map(s => s.trim()).filter(Boolean);
 
 // ====== CORS & Middlewares ======
 // ฟังก์ชันเลือก origin ทีละค่า (ห้ามส่งหลายค่าใน header เดียว)
-function corsOrigin(origin, callback) {
-  // ไม่มี origin (เช่น curl/health-check) → อนุญาต
-  if (!origin) return callback(null, true);
-  if (ALLOWLIST.includes(origin)) return callback(null, true);
-  return callback(new Error('Not allowed by CORS: ' + origin));
-}
-
-app.use(express.json());
-
-// log ทุกคำขอไว้ดูใน Render Logs
-app.use((req, _res, next) => {
+app.use((req, res, next) => {
+  // log debug
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${req.headers.origin || '-'}`);
-  next();
-});
+  console.log('ALLOWLIST =', ALLOWLIST);
 
-app.use(cors({
-  origin: corsOrigin,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type']
-}));
+  const origin = req.headers.origin;
+  const allowAny = ALLOWLIST.includes('*');
+  const allowed = allowAny || (origin && ALLOWLIST.includes(origin));
+
+  // ให้เบราว์เซอร์ cache ตาม Origin
+  res.setHeader('Vary', 'Origin');
+
+  if (allowed && origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+
+  // ตอบ preflight ทันที
+  if (req.method === 'OPTIONS') return res.sendStatus(allowed ? 204 : 403);
+  return next();
+});
 
 // ให้ preflight ผ่านทุกเส้นทาง
 app.options('*', cors({ origin: corsOrigin }));
